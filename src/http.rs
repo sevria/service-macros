@@ -294,14 +294,9 @@ fn parse_context_handler(
     Some((request, state))
 }
 
-/// `RequestMethod` variant name for an HTTP method string (e.g. `post` → `Post`).
+/// `Method` variant name for an HTTP method string (e.g. `post` → `POST`).
 fn request_method_ident(method_str: &str) -> Ident {
-    let mut chars = method_str.chars();
-    let cap = match chars.next() {
-        Some(first) => first.to_uppercase().collect::<String>() + chars.as_str(),
-        None => "Get".to_string(),
-    };
-    format_ident!("{}", cap)
+    format_ident!("{}", method_str.to_uppercase())
 }
 
 /// Generate the `.json_content_response(...)` calls for the response docs.
@@ -316,7 +311,7 @@ fn gen_response_calls(args: &OpenApiArgs) -> Vec<proc_macro2::TokenStream> {
                 let desc = match &r.description {
                     Some(d) => quote! { #d },
                     None => {
-                        quote! { <#schema_ty as ::sevria_service_kit::http::openapi::Endpoint>::description() }
+                        quote! { <#schema_ty as ::sevria_service_kit::http::Endpoint>::description() }
                     }
                 };
                 quote! {
@@ -360,28 +355,28 @@ fn gen_docs(args: &OpenApiArgs, method_ident: &Ident, path: &str) -> proc_macro2
     if let Some(req_ty) = &args.request {
         let body_schema_name = format!("{}Body", type_to_schema_name(req_ty));
         quote! {
-            let __fields = <#req_ty as ::sevria_service_kit::http::openapi::Endpoint>::request_fields();
+            let __fields = <#req_ty as ::sevria_service_kit::http::Endpoint>::request_fields();
             let __body_schema_name = #body_schema_name;
-            let __doc = ::sevria_service_kit::http::openapi::path::#method_ident(#path)
+            let __doc = ::sevria_service_kit::http::path::#method_ident(#path)
                 #tag_call
                 #summary_call
                 #description_call
                 #deprecated_call
                 .parameters(
-                    ::sevria_service_kit::http::openapi::parameters_from_fields(
+                    ::sevria_service_kit::http::parameters_from_fields(
                         &__fields,
-                        ::sevria_service_kit::http::openapi::Source::Path,
+                        ::sevria_service_kit::http::Source::Path,
                     )
                 )
                 .parameters(
-                    ::sevria_service_kit::http::openapi::parameters_from_fields(
+                    ::sevria_service_kit::http::parameters_from_fields(
                         &__fields,
-                        ::sevria_service_kit::http::openapi::Source::Query,
+                        ::sevria_service_kit::http::Source::Query,
                     )
                 );
             let __doc = if __fields
                 .iter()
-                .any(|f| f.source == ::sevria_service_kit::http::openapi::Source::Body)
+                .any(|f| f.source == ::sevria_service_kit::http::Source::Body)
             {
                 __doc.json_request_with_schema(#request_desc, __body_schema_name)
             } else {
@@ -390,11 +385,11 @@ fn gen_docs(args: &OpenApiArgs, method_ident: &Ident, path: &str) -> proc_macro2
             router.describe(__doc #(#response_calls)*);
             if __fields
                 .iter()
-                .any(|f| f.source == ::sevria_service_kit::http::openapi::Source::Body)
+                .any(|f| f.source == ::sevria_service_kit::http::Source::Body)
             {
                 router.add_schema(
                     __body_schema_name,
-                    ::sevria_service_kit::http::openapi::body_schema_from_fields(&__fields),
+                    ::sevria_service_kit::http::body_schema_from_fields(&__fields),
                 );
             }
         }
@@ -402,7 +397,7 @@ fn gen_docs(args: &OpenApiArgs, method_ident: &Ident, path: &str) -> proc_macro2
         // Plain documentation for endpoints without a request type.
         quote! {
             router.describe(
-                ::sevria_service_kit::http::openapi::path::#method_ident(#path)
+                ::sevria_service_kit::http::path::#method_ident(#path)
                     #tag_call
                     #summary_call
                     #description_call
@@ -425,7 +420,7 @@ fn gen_schema_registrations(args: &OpenApiArgs) -> Vec<proc_macro2::TokenStream>
         };
         if seen.insert(sn.clone()) {
             out.push(quote! {
-                router.add_schema(#sn, <#schema_ty as ::sevria_service_kit::http::openapi::Endpoint>::json_schema());
+                router.add_schema(#sn, <#schema_ty as ::sevria_service_kit::http::Endpoint>::json_schema());
             });
         }
     }
@@ -478,7 +473,7 @@ fn expand_endpoint(mut args: OpenApiArgs, item_fn: ItemFn) -> TokenStream {
             <#req_ty>::__register_route_with_state::<#state_ty, _, _, _>(
                 router,
                 #path,
-                ::sevria_service_kit::http::openapi::RequestMethod::#request_method,
+                ::sevria_service_kit::http::Method::#request_method,
                 #fn_name,
             );
         }
@@ -488,7 +483,7 @@ fn expand_endpoint(mut args: OpenApiArgs, item_fn: ItemFn) -> TokenStream {
             <#req_ty>::__register_route(
                 router,
                 #path,
-                ::sevria_service_kit::http::openapi::RequestMethod::#request_method,
+                ::sevria_service_kit::http::Method::#request_method,
                 #fn_name,
             );
         }
@@ -610,7 +605,7 @@ fn build_method_registration(
             <#req_ty>::__register_route(
                 &mut router,
                 #path,
-                ::sevria_service_kit::http::openapi::RequestMethod::#request_method,
+                ::sevria_service_kit::http::Method::#request_method,
                 {
                     let this = self.clone();
                     move |__req: #req_ty| {
@@ -738,7 +733,7 @@ fn expand_schema(input: ItemStruct) -> TokenStream {
     let mut description: Option<String> = None;
 
     for attr in &input.attrs {
-        if !attr.path().is_ident("openapi") {
+        if !attr.path().is_ident("schema") {
             continue;
         }
 
@@ -785,7 +780,7 @@ fn expand_schema(input: ItemStruct) -> TokenStream {
     };
 
     let expanded = quote! {
-        impl #generics ::sevria_service_kit::http::openapi::Endpoint for #name #generics {
+        impl #generics ::sevria_service_kit::http::Endpoint for #name #generics {
             fn description() -> &'static str {
                 #desc
             }
@@ -866,7 +861,7 @@ fn openapi_field_meta(
     let mut example: Option<String> = None;
 
     for attr in &field.attrs {
-        if !attr.path().is_ident("openapi") {
+        if !attr.path().is_ident("schema") {
             continue;
         }
 
@@ -943,9 +938,9 @@ fn request_fields_impl(field_infos: &[FieldInfo]) -> proc_macro2::TokenStream {
     let exprs = field_infos.iter().map(|fi| {
         let name = &fi.json_name;
         let source = match fi.source {
-            SourceKind::Path => quote! { ::sevria_service_kit::http::openapi::Source::Path },
-            SourceKind::Query => quote! { ::sevria_service_kit::http::openapi::Source::Query },
-            SourceKind::Body => quote! { ::sevria_service_kit::http::openapi::Source::Body },
+            SourceKind::Path => quote! { ::sevria_service_kit::http::Source::Path },
+            SourceKind::Query => quote! { ::sevria_service_kit::http::Source::Query },
+            SourceKind::Body => quote! { ::sevria_service_kit::http::Source::Body },
         };
         let schema = infer_json_type(&fi.ty);
         let required = fi.required;
@@ -960,7 +955,7 @@ fn request_fields_impl(field_infos: &[FieldInfo]) -> proc_macro2::TokenStream {
             .map(|e| quote! { Some(::sevria_service_kit::__private::serde_json::json!(#e)) })
             .unwrap_or_else(|| quote! { None });
         quote! {
-            ::sevria_service_kit::http::openapi::RequestField {
+            ::sevria_service_kit::http::RequestField {
                 name: #name.to_string(),
                 source: #source,
                 schema: #schema,
@@ -972,7 +967,7 @@ fn request_fields_impl(field_infos: &[FieldInfo]) -> proc_macro2::TokenStream {
     });
 
     quote! {
-        fn request_fields() -> ::std::vec::Vec<::sevria_service_kit::http::openapi::RequestField> {
+        fn request_fields() -> ::std::vec::Vec<::sevria_service_kit::http::RequestField> {
             ::std::vec![ #(#exprs),* ]
         }
     }
@@ -1080,7 +1075,7 @@ fn request_machinery(
         #vis fn __register_route<F, Fut, R>(
             router: &mut ::sevria_service_kit::http::Router,
             path: &str,
-            method: ::sevria_service_kit::http::openapi::RequestMethod,
+            method: ::sevria_service_kit::http::Method,
             handler: F,
         ) where
             F: Fn(#name) -> Fut + Clone + Send + Sync + 'static,
@@ -1089,15 +1084,15 @@ fn request_machinery(
         {
             use ::sevria_service_kit::http::__private as __axum;
             let route = match method {
-                ::sevria_service_kit::http::openapi::RequestMethod::Get => __axum::routing::get(#closure),
-                ::sevria_service_kit::http::openapi::RequestMethod::Post => __axum::routing::post(#closure),
-                ::sevria_service_kit::http::openapi::RequestMethod::Put => __axum::routing::put(#closure),
-                ::sevria_service_kit::http::openapi::RequestMethod::Patch => __axum::routing::patch(#closure),
-                ::sevria_service_kit::http::openapi::RequestMethod::Delete => __axum::routing::delete(#closure),
-                ::sevria_service_kit::http::openapi::RequestMethod::Options => __axum::routing::options(#closure),
-                ::sevria_service_kit::http::openapi::RequestMethod::Head => __axum::routing::head(#closure),
-                ::sevria_service_kit::http::openapi::RequestMethod::Trace => __axum::routing::trace(#closure),
-                ::sevria_service_kit::http::openapi::RequestMethod::Connect => __axum::routing::connect(#closure),
+                ::sevria_service_kit::http::Method::GET => __axum::routing::get(#closure),
+                ::sevria_service_kit::http::Method::POST => __axum::routing::post(#closure),
+                ::sevria_service_kit::http::Method::PUT => __axum::routing::put(#closure),
+                ::sevria_service_kit::http::Method::PATCH => __axum::routing::patch(#closure),
+                ::sevria_service_kit::http::Method::DELETE => __axum::routing::delete(#closure),
+                ::sevria_service_kit::http::Method::OPTIONS => __axum::routing::options(#closure),
+                ::sevria_service_kit::http::Method::HEAD => __axum::routing::head(#closure),
+                ::sevria_service_kit::http::Method::TRACE => __axum::routing::trace(#closure),
+                ::sevria_service_kit::http::Method::CONNECT => __axum::routing::connect(#closure),
             };
             router.add_route(path, route);
         }
@@ -1124,7 +1119,7 @@ fn request_machinery(
         #vis fn __register_route_with_state<State, F, Fut, R>(
             router: &mut ::sevria_service_kit::http::Router,
             path: &str,
-            method: ::sevria_service_kit::http::openapi::RequestMethod,
+            method: ::sevria_service_kit::http::Method,
             handler: F,
         ) where
             F: Fn(::sevria_service_kit::http::Context<#name, State>) -> Fut + Clone + Send + Sync + 'static,
@@ -1138,15 +1133,15 @@ fn request_machinery(
                  registered (call `Router::with_state(...)`)",
             );
             let route = match method {
-                ::sevria_service_kit::http::openapi::RequestMethod::Get => __axum::routing::get(#state_closure).with_state(__state),
-                ::sevria_service_kit::http::openapi::RequestMethod::Post => __axum::routing::post(#state_closure).with_state(__state),
-                ::sevria_service_kit::http::openapi::RequestMethod::Put => __axum::routing::put(#state_closure).with_state(__state),
-                ::sevria_service_kit::http::openapi::RequestMethod::Patch => __axum::routing::patch(#state_closure).with_state(__state),
-                ::sevria_service_kit::http::openapi::RequestMethod::Delete => __axum::routing::delete(#state_closure).with_state(__state),
-                ::sevria_service_kit::http::openapi::RequestMethod::Options => __axum::routing::options(#state_closure).with_state(__state),
-                ::sevria_service_kit::http::openapi::RequestMethod::Head => __axum::routing::head(#state_closure).with_state(__state),
-                ::sevria_service_kit::http::openapi::RequestMethod::Trace => __axum::routing::trace(#state_closure).with_state(__state),
-                ::sevria_service_kit::http::openapi::RequestMethod::Connect => __axum::routing::connect(#state_closure).with_state(__state),
+                ::sevria_service_kit::http::Method::GET => __axum::routing::get(#state_closure).with_state(__state),
+                ::sevria_service_kit::http::Method::POST => __axum::routing::post(#state_closure).with_state(__state),
+                ::sevria_service_kit::http::Method::PUT => __axum::routing::put(#state_closure).with_state(__state),
+                ::sevria_service_kit::http::Method::PATCH => __axum::routing::patch(#state_closure).with_state(__state),
+                ::sevria_service_kit::http::Method::DELETE => __axum::routing::delete(#state_closure).with_state(__state),
+                ::sevria_service_kit::http::Method::OPTIONS => __axum::routing::options(#state_closure).with_state(__state),
+                ::sevria_service_kit::http::Method::HEAD => __axum::routing::head(#state_closure).with_state(__state),
+                ::sevria_service_kit::http::Method::TRACE => __axum::routing::trace(#state_closure).with_state(__state),
+                ::sevria_service_kit::http::Method::CONNECT => __axum::routing::connect(#state_closure).with_state(__state),
             };
             router.add_route(path, route);
         }
@@ -1449,7 +1444,7 @@ fn expand_response(
             error_props.extend(quote! {
                 "details": {
                     "type": "array",
-                    "items": <::sevria_service_kit::ErrorDetail as ::sevria_service_kit::http::openapi::Endpoint>::json_schema(),
+                    "items": <::sevria_service_kit::ErrorDetail as ::sevria_service_kit::http::Endpoint>::json_schema(),
                     "example": [ #(#details_examples),* ]
                 },
             });
@@ -1471,12 +1466,12 @@ fn expand_response(
         // Meta field (only if include_meta)
         if include_meta {
             props.extend(quote! {
-                props.insert("meta".into(), <#meta_ty as ::sevria_service_kit::http::openapi::Endpoint>::json_schema());
+                props.insert("meta".into(), <#meta_ty as ::sevria_service_kit::http::Endpoint>::json_schema());
             });
         }
 
         quote! {
-            impl ::sevria_service_kit::http::openapi::Endpoint for #type_name {
+            impl ::sevria_service_kit::http::Endpoint for #type_name {
                 fn description() -> &'static str {
                     #description
                 }
@@ -1498,16 +1493,16 @@ fn expand_response(
         let mut props = proc_macro2::TokenStream::new();
         props.extend(quote! {
             props.insert("success".into(), ::sevria_service_kit::__private::serde_json::json!({"type": "boolean"}));
-            props.insert("data".into(), <#data_ty as ::sevria_service_kit::http::openapi::Endpoint>::json_schema());
+            props.insert("data".into(), <#data_ty as ::sevria_service_kit::http::Endpoint>::json_schema());
         });
         if include_meta {
             props.extend(quote! {
-                props.insert("meta".into(), <#meta_ty as ::sevria_service_kit::http::openapi::Endpoint>::json_schema());
+                props.insert("meta".into(), <#meta_ty as ::sevria_service_kit::http::Endpoint>::json_schema());
             });
         }
 
         quote! {
-            impl ::sevria_service_kit::http::openapi::Endpoint for #type_name {
+            impl ::sevria_service_kit::http::Endpoint for #type_name {
                 fn description() -> &'static str {
                     #description
                 }

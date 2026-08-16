@@ -5,7 +5,7 @@
 //! lifting lives in the [`openapi`] module; the functions here are thin
 //! wrappers that re-export the public macro surface.
 
-mod openapi;
+mod http;
 
 use proc_macro::TokenStream;
 
@@ -13,7 +13,7 @@ use proc_macro::TokenStream;
 /// metadata and generates a hidden route-handle const.
 #[proc_macro_attribute]
 pub fn endpoint(attr: TokenStream, item: TokenStream) -> TokenStream {
-    openapi::endpoint(attr, item)
+    http::endpoint(attr, item)
 }
 
 /// Attribute macro for an inherent `impl` block whose methods are annotated
@@ -21,19 +21,19 @@ pub fn endpoint(attr: TokenStream, item: TokenStream) -> TokenStream {
 /// that registers every endpoint route plus its OpenAPI metadata.
 #[proc_macro_attribute]
 pub fn router(attr: TokenStream, item: TokenStream) -> TokenStream {
-    openapi::router(attr, item)
+    http::router(attr, item)
 }
 
 /// Derive macro that implements `Endpoint` for a type.
 ///
-/// Reads the `#[openapi(description = "...")]` attribute on the struct.
-#[proc_macro_derive(Schema, attributes(openapi))]
+/// Reads the `#[schema(description = "...")]` attribute on the struct.
+#[proc_macro_derive(Schema, attributes(schema))]
 pub fn schema(item: TokenStream) -> TokenStream {
-    openapi::derive_schema(item)
+    http::derive_schema(item)
 }
 
 /// Attribute macro for declaring response types with OpenAPI metadata.
 #[proc_macro_attribute]
 pub fn response(attr: TokenStream, item: TokenStream) -> TokenStream {
-    openapi::response(attr, item)
+    http::response(attr, item)
 }
