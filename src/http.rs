@@ -1,7 +1,7 @@
 use proc_macro::TokenStream;
 use quote::{format_ident, quote};
 use syn::{
-    Attribute, Ident, ItemFn, ItemStruct, LitInt, LitStr, Token, Type, Visibility,
+    Attribute, Ident, ItemFn, ItemStruct, LitStr, Token, Type, Visibility,
     parse::{Parse, ParseStream},
     spanned::Spanned,
 };
@@ -234,6 +234,57 @@ fn method_from_expr(expr: &syn::Expr) -> syn::Result<String> {
         _ => Err(syn::Error::new(
             expr.span(),
             "expected `\"post\"` or `Method::POST`",
+        )),
+    }
+}
+
+/// Normalize a `status` value into the numeric status code: `422` or
+/// `Status::UNPROCESSABLE_ENTITY` both become `422`.
+fn status_from_expr(expr: &syn::Expr) -> syn::Result<u16> {
+    match expr {
+        syn::Expr::Lit(lit) => {
+            if let syn::Lit::Int(i) = &lit.lit {
+                i.base10_parse()
+            } else {
+                Err(syn::Error::new(
+                    expr.span(),
+                    "expected a status code like `422` or `Status::UNPROCESSABLE_ENTITY`",
+                ))
+            }
+        }
+        syn::Expr::Path(p) => {
+            let seg = p.path.segments.last().ok_or_else(|| {
+                syn::Error::new(expr.span(), "expected `Status::UNPROCESSABLE_ENTITY`")
+            })?;
+            let name = seg.ident.to_string();
+            let code = match name.as_str() {
+                "OK" => 200,
+                "CREATED" => 201,
+                "ACCEPTED" => 202,
+                "NO_CONTENT" => 204,
+                "BAD_REQUEST" => 400,
+                "UNAUTHORIZED" => 401,
+                "FORBIDDEN" => 403,
+                "NOT_FOUND" => 404,
+                "CONFLICT" => 409,
+                "UNPROCESSABLE_ENTITY" => 422,
+                "TOO_MANY_REQUESTS" => 429,
+                "INTERNAL_SERVER_ERROR" => 500,
+                "NOT_IMPLEMENTED" => 501,
+                "SERVICE_UNAVAILABLE" => 503,
+                "GATEWAY_TIMEOUT" => 504,
+                _ => {
+                    return Err(syn::Error::new(
+                        seg.span(),
+                        format!("expected a `Status::*` constant, found `{name}`"),
+                    ));
+                }
+            };
+            Ok(code)
+        }
+        _ => Err(syn::Error::new(
+            expr.span(),
+            "expected `422` or `Status::UNPROCESSABLE_ENTITY`",
         )),
     }
 }
@@ -1342,6 +1393,8 @@ fn sub_struct_def(struct_ident: &Ident, fields: &[&FieldInfo]) -> proc_macro2::T
 /// Attribute macro for declaring response types with OpenAPI metadata.
 ///
 /// Transforms a type alias into a newtype struct implementing `Endpoint`.
+/// The `status` accepts either a numeric literal (`422`) or a `Status::*`
+/// constant (`Status::UNPROCESSABLE_ENTITY`), matching `#[endpoint]`.
 ///
 /// # Success response
 ///
@@ -1354,7 +1407,7 @@ fn sub_struct_def(struct_ident: &Ident, fields: &[&FieldInfo]) -> proc_macro2::T
 ///
 /// ```ignore
 /// #[openapi::response(
-///     status = 404,
+///     status = Status::NOT_FOUND,
 ///     description = "Resource not found",
 ///     error = (code = "NOT_FOUND", message = "Resource not found"),
 /// )]
@@ -1419,8 +1472,9 @@ impl Parse for ResponseAttr {
 
                 match key.to_string().as_str() {
                     "status" => {
-                        let val: LitInt = input.parse()?;
-                        status = Some(val.base10_parse()?);
+                        // Accept either `status = 422` or `status = Status::UNPROCESSABLE_ENTITY`.
+                        let val: syn::Expr = input.parse()?;
+                        status = Some(status_from_expr(&val)?);
                     }
                     "description" => {
                         let val: LitStr = input.parse()?;
@@ -1572,6 +1626,9 @@ fn expand_response(
     let has_details = !error_details.is_empty();
 
     let is_error = is_path_named(inner_type, "ErrorResponse");
+    // Success responses (`Response<D, M>` aliases) expose a `new()` constructor;
+    // error responses (`ErrorResponse<M>`) are built via `From<Error>` instead.
+    let is_success = is_path_named(inner_type, "Response");
     let attrs: Vec<&Attribute> = type_alias
         .attrs
         .iter()
@@ -1688,8 +1745,21 @@ fn expand_response(
     // Hidden metadata: status, description, and optional summary used by the endpoint macro
     let summary_str = summary.unwrap_or("");
     let has_summary = summary.is_some();
+    // Success responses get an ergonomic `new()` that yields `success: true`.
+    let new_fn = if is_success {
+        quote! {
+            /// Construct an empty success response (`success: true`).
+            pub fn new() -> Self {
+                Self(<#inner_type>::new())
+            }
+        }
+    } else {
+        proc_macro2::TokenStream::new()
+    };
     let meta_fn = quote! {
         impl #type_name {
+            #new_fn
+
             #[doc(hidden)]
             pub const fn __openapi_response_meta() -> (u16, &'static str) {
                 (#status_literal, #description)
