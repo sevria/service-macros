@@ -1622,8 +1622,8 @@ fn expand_response(
                 "required": ["code", "message"]
             }));
         });
-        // Meta field (only if include_meta)
-        if include_meta {
+        // Meta field (only when requested and the meta type is not `()`)
+        if include_meta && !is_unit_type(&meta_ty) {
             props.extend(quote! {
                 props.insert("meta".into(), <#meta_ty as ::sevria_service_kit::http::Endpoint>::json_schema());
             });
@@ -1652,9 +1652,15 @@ fn expand_response(
         let mut props = proc_macro2::TokenStream::new();
         props.extend(quote! {
             props.insert("success".into(), ::sevria_service_kit::__private::serde_json::json!({"type": "boolean"}));
-            props.insert("data".into(), <#data_ty as ::sevria_service_kit::http::Endpoint>::json_schema());
         });
-        if include_meta {
+        // `data` is omitted when the data type is `()` (it is always `None`).
+        if !is_unit_type(&data_ty) {
+            props.extend(quote! {
+                props.insert("data".into(), <#data_ty as ::sevria_service_kit::http::Endpoint>::json_schema());
+            });
+        }
+        // `meta` is omitted when not requested or when the meta type is `()`.
+        if include_meta && !is_unit_type(&meta_ty) {
             props.extend(quote! {
                 props.insert("meta".into(), <#meta_ty as ::sevria_service_kit::http::Endpoint>::json_schema());
             });
@@ -1724,6 +1730,15 @@ fn is_path_named(ty: &Type, name: &str) -> bool {
             .unwrap_or(false)
     } else {
         false
+    }
+}
+
+/// Returns `true` when the syntax tree type is the unit type `()`.
+fn is_unit_type(ty: &Type) -> bool {
+    match ty {
+        Type::Paren(inner) => is_unit_type(&inner.elem),
+        Type::Tuple(tuple) => tuple.elems.is_empty(),
+        _ => false,
     }
 }
 
